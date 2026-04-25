@@ -36,7 +36,7 @@
   <div class="topbar">
     <h1 id="pageTitle">Dashboard</h1>
     <div class="controls">
-      <span class="sys-status"><span class="sys-dot" id="sysDot" style="background:{% if bot_running %}var(--green){% else %}var(--text3){% endif %}"></span><span id="sysLabel">{% if bot_running %}System Running{% else %}System Idle{% endif %}</span></span>
+      <span class="sys-status"><span class="sys-dot {{ 'running' if bot_running else 'idle' }}" id="sysDot"></span><span id="sysLabel">{{ 'System Running' if bot_running else 'System Idle' }}</span></span>
       {% if not bot_running %}
       <button class="btn btn-p" onclick="startBot()">▶ Start Dispatch</button>
       {% else %}
@@ -51,12 +51,12 @@
     <div id="dashboard-tab" class="tab active">
       <div class="stats">
         <div class="stat-card"><div class="stat-label">Total Accounts</div><div class="stat-value" id="statTotal">{{ auth_status|length }}</div></div>
-        <div class="stat-card"><div class="stat-label">Authenticated</div><div class="stat-value" id="statActive">{{ auth_status|selectattr('authenticated')|list|length }}</div></div>
+        <div class="stat-card"><div class="stat-label">Authenticated</div><div class="stat-value" id="statActive">{{ auth_status|selectattr('authenticated', 'true')|list|length }}</div></div>
         <div class="stat-card"><div class="stat-label">Messages Sent</div><div class="stat-value" id="statSent">0</div></div>
         <div class="stat-card"><div class="stat-label">Errors</div><div class="stat-value" id="statErrors">0</div></div>
       </div>
 
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
         <div><h2 style="font-size:1.05rem;font-weight:600">Sender Accounts</h2><p style="font-size:.8rem;color:var(--text2)">Manage your Telegram delivery nodes</p></div>
         <button class="btn btn-p" onclick="openAddModal()">+ Add Account</button>
       </div>
@@ -70,11 +70,22 @@
                 <div class="avatar">{{ acc.phone[-2:] }}</div>
                 <div><div class="card-name">{{ acc.phone }}</div><div class="card-sub">session_{{ acc.clean_phone }}</div></div>
               </div>
-              {% if acc.authenticated %}
-                <div class="badge b-active">Active</div>
-              {% else %}
-                <div class="badge b-unauth">Auth Required</div>
-              {% endif %}
+              <div style="display: flex; align-items: center; gap: 8px;">
+                {% if acc.paused %}
+                  <div class="badge b-cooldown">Paused</div>
+                {% elif acc.authenticated %}
+                  <div class="badge b-active">Active</div>
+                {% else %}
+                  <div class="badge b-unauth">Auth Required</div>
+                {% endif %}
+                <div class="dropdown">
+                  <button class="icon-btn" onclick="toggleDropdown('{{ acc.clean_phone }}')">⋮</button>
+                  <div class="dropdown-menu" id="menu-{{ acc.clean_phone }}">
+                    <div class="dropdown-item" onclick="togglePause('{{ acc.phone }}')">{{ 'Resume' if acc.paused else 'Stop' }} Automation</div>
+                    <div class="dropdown-item delete-item" onclick="deleteAccount('{{ acc.phone }}')">Delete Account</div>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="card-meta">
               <div>Status<span>{{ 'Dispatching' if bot_running and acc.authenticated else 'Idle' }}</span></div>

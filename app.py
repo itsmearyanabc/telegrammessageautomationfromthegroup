@@ -152,6 +152,10 @@ async def async_sign_in(api_id, api_hash, phone, phone_code_hash, code):
         me = await client.get_me()
         await client.disconnect()
         _AUTH_CLIENTS.pop(p_clean, None)
+        
+        # Create authorized marker
+        open(f"{session_name}.authorized", "w").close()
+        
         return {"status": "success", "message": f"Logged in as {me.first_name}"}
     except Exception as e:
         try:
@@ -189,14 +193,32 @@ def _build_status_payload():
     for phone in phone_list:
         p_clean = phone.replace("+", "").replace(" ", "").replace("-", "")
         session_file = f"sessions/session_{p_clean}.session"
-        authenticated = os.path.exists(session_file)
+        auth_file = f"sessions/session_{p_clean}.authorized"
+        
+        # Use .authorized marker if exists, otherwise fallback to SQLite check once
+        authenticated = os.path.exists(auth_file)
+        if not authenticated and os.path.exists(session_file):
+            try:
+                import sqlite3
+                with sqlite3.connect(session_file) as conn:
+                    c = conn.cursor()
+                    # Check for dc_id in sessions table - exists if connect() was ever successful
+                    c.execute("SELECT count(*) FROM sessions")
+                    if c.fetchone()[0] > 0:
+                        # For migration: if it looks valid, create the marker
+                        open(auth_file, "w").close()
+                        authenticated = True
+            except Exception:
+                pass
         acc_status = ACCOUNT_STATUS.get(p_clean, {})
+        is_paused = os.path.exists(f"sessions/pause_{p_clean}.flag")
         accounts.append({
             "phone": phone,
             "clean_phone": p_clean,
             "authenticated": authenticated,
-            "status": acc_status.get("status", "idle" if authenticated else "unauth"),
-            "activity": acc_status.get("activity", "—"),
+            "paused": is_paused,
+            "status": "paused" if is_paused else acc_status.get("status", "idle" if authenticated else "unauth"),
+            "activity": "Paused" if is_paused else acc_status.get("activity", "—"),
             "sent": acc_status.get("sent", 0),
             "errors": acc_status.get("errors", 0),
             "cooldown_until": acc_status.get("cooldown_until", 0),
@@ -262,10 +284,27 @@ def index():
     auth_status = []
     for p in phone_list:
         p_clean = p.replace("+", "").replace(" ", "").replace("-", "")
+        session_file = f"sessions/session_{p_clean}.session"
+        auth_file = f"sessions/session_{p_clean}.authorized"
+        auth = os.path.exists(auth_file)
+        
+        if not auth and os.path.exists(session_file):
+            try:
+                import sqlite3
+                with sqlite3.connect(session_file) as conn:
+                    c = conn.cursor()
+                    c.execute("SELECT count(*) FROM sessions")
+                    if c.fetchone()[0] > 0:
+                        open(auth_file, "w").close()
+                        auth = True
+            except Exception:
+                pass
+
         auth_status.append({
             "phone": p,
             "clean_phone": p_clean,
-            "authenticated": os.path.exists(f"sessions/session_{p_clean}.session"),
+            "authenticated": auth,
+            "paused": os.path.exists(f"sessions/pause_{p_clean}.flag"),
         })
     return render_template("index.html", config=config, bot_running=is_running, auth_status=auth_status)
 
@@ -373,7 +412,7 @@ def logout_account():
     phone = request.form.get("phone", "")
     p_clean = phone.replace("+", "").replace(" ", "").replace("-", "")
     removed = False
-    for suffix in [".session", ".session-journal"]:
+    for suffix in [".session", ".session-journal", ".authorized"]:
         path = f"sessions/session_{p_clean}{suffix}"
         if os.path.exists(path):
             try:
@@ -386,26 +425,87 @@ def logout_account():
     return jsonify({"status": "success", "message": msg})
 
 
+@app.route("/api/pause-account", methods=["POST"])
+@login_required
+def pause_account():
+    data = request.get_json(silent=True) or {}
+    phone = data.get("phone", "").strip()
+    if not phone:
+        return jsonify({"status": "error", "message": "Phone number required"}), 400
+    
+    p_clean = phone.replace("+", "").replace(" ", "").replace("-", "")
+    flag_path = f"sessions/pause_{p_clean}.flag"
+    
+    if os.path.exists(flag_path):
+        os.remove(flag_path)
+        return jsonify({"status": "success", "message": "Automation resumed", "state": "resumed"})
+    else:
+        open(flag_path, "w").close()
+        return jsonify({"status": "success", "message": "Automation paused", "state": "paused"})
+
+
+@app.route("/api/delete-account", methods=["POST"])
+@login_required
+def delete_account():
+    data = request.get_json(silent=True) or {}
+    phone = data.get("phone", "").strip()
+    if not phone:
+        return jsonify({"status": "error", "message": "Phone number required"}), 400
+        
+    config = load_config()
+    existing_phones = [p.strip() for p in config.get("phones", "").split("\n") if p.strip()]
+    if phone in existing_phones:
+        existing_phones.remove(phone)
+        config["phones"] = "\n".join(existing_phones)
+        if "account_targets" in config and phone in config["account_targets"]:
+            del config["account_targets"][phone]
+        save_config(config)
+        
+    p_clean = phone.replace("+", "").replace(" ", "").replace("-", "")
+    for suffix in [".session", ".session-journal", ".authorized"]:
+        path = f"sessions/session_{p_clean}{suffix}"
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+                
+    flag_path = f"sessions/pause_{p_clean}.flag"
+    if os.path.exists(flag_path):
+        try:
+            os.remove(flag_path)
+        except Exception:
+            pass
+            
+    ACCOUNT_STATUS.pop(p_clean, None)
+    return jsonify({"status": "success", "message": "Account deleted"})
+
 @app.route("/save", methods=["POST"])
 @login_required
 def save():
     try:
-        # FIX: Load existing config first to preserve fields like
-        # account_targets that are NOT part of the settings form.
-        # Old code overwrote the entire config dict, losing account_targets.
         config = load_config()
+        
+        def get_int(key, default):
+            val = request.form.get(key, "").strip()
+            try:
+                return int(val) if val else default
+            except ValueError:
+                return default
+
         config.update({
-            "api_id": request.form.get("api_id", ""),
-            "api_hash": request.form.get("api_hash", ""),
-            "phones": request.form.get("phones", ""),
-            "source_channel": request.form.get("source_channel", ""),
-            "targets": request.form.get("targets", ""),
-            "min_delay": int(request.form.get("min_delay", 600)),
-            "max_delay": int(request.form.get("max_delay", 900)),
+            "api_id": request.form.get("api_id", "").strip(),
+            "api_hash": request.form.get("api_hash", "").strip(),
+            "phones": request.form.get("phones", "").strip(),
+            "source_channel": request.form.get("source_channel", "").strip(),
+            "targets": request.form.get("targets", "").strip(),
+            "min_delay": get_int("min_delay", 5),
+            "max_delay": get_int("max_delay", 10),
         })
         save_config(config)
         return jsonify({"status": "success", "message": "Configuration saved!"})
     except Exception as e:
+        app.logger.error(f"Save Error: {str(e)}")
         return jsonify({"status": "error", "message": str(e)})
 
 

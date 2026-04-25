@@ -1,13 +1,13 @@
 {
     "api_id": "33102498",
     "api_hash": "e13c7b4d23a8eab7ee03ac2917ca59a2",
-    "phones": "+91 9310362649\r\n+91 7701897557\r\n+6285167853385",
-    "source_channel": "-1003929930544",
+    "phones": "+91 7701897557\r\n+919871026176",
+    "source_channel": "-1003282397638",
     "targets": "",
     "min_delay": 5,
     "max_delay": 10,
     "account_targets": {
-        "+91 9310362649": "https://t.me/Itsmearyan_abc\n@Armedia_007\n",
-        "+6285167853385": "@Tiktok_Followers_Likes_Group\n@tiktok_buy_and_sell_group"
+        "+91 7701897557": "@itsmearyan_abc",
+        "+919871026176": "@Armedia_007\n@mostlyunstable"
     }
 }

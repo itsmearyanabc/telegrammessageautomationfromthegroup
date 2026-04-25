@@ -111,6 +111,15 @@ class AccountWorker:
         if drained:
             logger.debug(f"[{self.name}] Drained {drained} stale job(s)")
 
+        # Check if paused
+        import os
+        clean_phone = self.session_name.replace("+", "").replace(" ", "").replace("-", "")
+        if os.path.exists(f"sessions/pause_{clean_phone}.flag"):
+            logger.info(f"[{self.name}] ⏸️ Paused — skipping dispatch")
+            self.state = WorkerState.IDLE
+            self.last_action = "Paused"
+            return
+
         # Enqueue one job per target
         for target in self.targets:
             await self.queue.put({

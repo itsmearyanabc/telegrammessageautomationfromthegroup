@@ -171,6 +171,51 @@ async function handleAddAccount(){
   _addLock=false;
 }
 
+// ── DROPDOWN & ACCOUNT ACTIONS ──
+function toggleDropdown(id) {
+  const menu = document.getElementById('menu-' + id);
+  if (menu) {
+    const isShowing = menu.classList.contains('show');
+    document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('show'));
+    if (!isShowing) menu.classList.add('show');
+  }
+}
+
+window.addEventListener('click', (e) => {
+  if (!e.target.matches('.icon-btn')) {
+    document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('show'));
+  }
+});
+
+async function togglePause(phone) {
+  try {
+    const res = await fetch('/api/pause-account', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone })
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      toast(data.message, 'ok');
+      setTimeout(() => location.reload(), 800);
+    } else toast(data.message, 'err');
+  } catch (e) { toast('Network error', 'err'); }
+}
+
+async function deleteAccount(phone) {
+  if (!confirm('Are you sure you want to completely delete ' + phone + ' and its session?')) return;
+  try {
+    const res = await fetch('/api/delete-account', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone })
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      toast('Account deleted');
+      setTimeout(() => location.reload(), 800);
+    } else toast(data.message, 'err');
+  } catch (e) { toast('Network error', 'err'); }
+}
+
 // ── TARGET MODAL ──
 async function openTargetModal(phone, clean_phone){
   document.getElementById('targetModalSubtitle').textContent = 'Targets for ' + phone;
