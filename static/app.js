@@ -1,5 +1,5 @@
 /**
- * ARMEDIAS AI — Production Frontend Controller (Hardened)
+ * ARMEDIAS AI — Production Frontend Controller (Hardened + Nicknames)
  * ──────────────────────────────────────────────────────
  */
 
@@ -107,15 +107,24 @@ function renderDashboard(accounts) {
     });
 }
 
+function getDisplayName(acc) {
+    if (acc.nickname && acc.nickname.trim()) return acc.nickname.trim();
+    return acc.phone;
+}
+
 function createCardNode(acc) {
     const card = document.createElement('div');
     card.className = 'card';
     card.id = `card-${acc.clean_phone}`;
+    const displayName = getDisplayName(acc);
     card.innerHTML = `
         <div class="card-top">
           <div class="card-profile">
-            <div class="avatar">${acc.phone.slice(-2)}</div>
-            <div><div class="card-name">${acc.phone}</div><div class="card-sub">session_${acc.clean_phone}</div></div>
+            <div class="avatar">${displayName.slice(0, 2).toUpperCase()}</div>
+            <div>
+              <div class="card-name">${displayName}</div>
+              <div class="card-sub">${acc.phone}</div>
+            </div>
           </div>
           <div class="badge-container"></div>
         </div>
@@ -139,6 +148,7 @@ function createCardNode(acc) {
           <button class="btn btn-p btn-sm btn-dispatch" style="flex:2">Dispatch</button>
           <button class="btn btn-s btn-sm btn-loop"><i class="fas fa-play"></i></button>
           <button class="btn btn-s btn-sm btn-settings"><i class="fas fa-cog"></i></button>
+          <button class="btn btn-s btn-sm btn-rename" title="Rename Account"><i class="fas fa-pen"></i></button>
           <button class="btn btn-s btn-sm btn-logout" title="Logout Session"><i class="fas fa-sign-out-alt"></i></button>
           <button class="btn btn-d btn-sm btn-delete" title="Delete Permanent"><i class="fas fa-trash"></i></button>
         </div>
@@ -152,7 +162,17 @@ function updateCardContent(card, acc) {
     const progText = card.querySelector('.progress-text');
     const countText = card.querySelector('.count-text');
 
-    let bClass = 'b-idle', bText = acc.state.toUpperCase();
+    // Update display name if changed
+    const displayName = getDisplayName(acc);
+    const nameEl = card.querySelector('.card-name');
+    if (nameEl && nameEl.textContent !== displayName) {
+        nameEl.textContent = displayName;
+        card.querySelector('.card-sub').textContent = acc.phone;
+        const avatar = card.querySelector('.avatar');
+        if (avatar) avatar.textContent = displayName.slice(0, 2).toUpperCase();
+    }
+
+    let bClass = 'b-idle', bText = (acc.state || 'idle').toUpperCase();
     if (acc.state === 'sending') bClass = 'b-active';
     else if (acc.state === 'cooldown') bClass = 'b-cooldown';
     else if (acc.state === 'unauth') bClass = 'b-unauth';
@@ -163,19 +183,20 @@ function updateCardContent(card, acc) {
 
     const p = acc.progress || 0;
     progBar.style.width = `${p}%`;
-    progBar.style.background = acc.errors > 0 ? '#ff4d4f' : 'var(--primary)';
+    progBar.style.background = (acc.errors || 0) > 0 ? '#ff4d4f' : 'var(--primary)';
     progText.textContent = `${p}% Complete`;
     countText.textContent = `${(acc.sent || 0) + (acc.errors || 0)} / ${acc.total || 0}`;
 
     card.querySelector('.stat-time').textContent = formatTime(acc.last_dispatch_time);
-    card.querySelector('.stat-sent').textContent = acc.sent;
-    card.querySelector('.stat-errors').textContent = acc.errors;
-    card.querySelector('.card-action-bar').textContent = acc.last_action;
+    card.querySelector('.stat-sent').textContent = acc.sent || 0;
+    card.querySelector('.stat-errors').textContent = acc.errors || 0;
+    card.querySelector('.card-action-bar').textContent = acc.last_action || 'Idle';
 
     const dispatchBtn = card.querySelector('.btn-dispatch');
     const loopBtn = card.querySelector('.btn-loop');
     const logoutBtn = card.querySelector('.btn-logout');
     const deleteBtn = card.querySelector('.btn-delete');
+    const renameBtn = card.querySelector('.btn-rename');
 
     if (!acc.authenticated) {
         dispatchBtn.innerHTML = '<i class="fas fa-key"></i> Login';
@@ -193,6 +214,7 @@ function updateCardContent(card, acc) {
         logoutBtn.onclick = () => logoutAccount(acc.phone);
     }
     card.querySelector('.btn-settings').onclick = () => openSessionSettings(acc.clean_phone);
+    renameBtn.onclick = () => promptRename(acc.clean_phone, acc.phone, acc.nickname || '');
     deleteBtn.onclick = () => deleteAccount(acc.phone);
 }
 
@@ -232,10 +254,11 @@ async function openSessionSettings(phone) {
     const acc = currentAccounts.find(a => a.clean_phone === phone);
     if (!acc) return;
     document.getElementById('edit-phone').value = phone;
-    document.getElementById('modal-phone').textContent = `Config: ${acc.phone}`;
+    document.getElementById('modal-phone').textContent = `Config: ${getDisplayName(acc)}`;
     document.getElementById('edit-source').value = acc.source_channel || '';
     document.getElementById('edit-interval').value = acc.loop_interval || 15;
     document.getElementById('edit-delay').value = acc.msg_delay || 5;
+    document.getElementById('edit-nickname').value = acc.nickname || '';
     const data = await apiCall(`/api/account-targets?phone=${encodeURIComponent(acc.phone)}`);
     document.getElementById('edit-targets').value = data.targets || '';
     showModal('settings-modal');
@@ -247,7 +270,8 @@ async function saveSessionSettings() {
         source_channel: document.getElementById('edit-source').value, 
         loop_interval: parseInt(document.getElementById('edit-interval').value), 
         msg_delay: parseInt(document.getElementById('edit-delay').value), 
-        targets: document.getElementById('edit-targets').value.split('\n').map(x => x.trim()).filter(x => x) 
+        targets: document.getElementById('edit-targets').value.split('\n').map(x => x.trim()).filter(x => x),
+        nickname: document.getElementById('edit-nickname').value.trim()
     };
     const data = await apiCall('/api/session/settings', { method: 'POST', body: JSON.stringify(payload) });
     if (data.status === 'success') { toast('Settings Saved'); closeModal(); } else toast(data.message, 'err');
@@ -264,6 +288,16 @@ async function deleteAccount(phone) {
     if (!confirm(`Permanently delete ${phone}?`)) return;
     const data = await apiCall('/api/delete-account', { method: 'POST', body: JSON.stringify({phone}) });
     toast(data.status === 'success' ? 'Deleted' : data.message);
+}
+
+async function promptRename(cleanPhone, phone, currentNick) {
+    const nickname = prompt(`Set a nickname for ${phone}:`, currentNick);
+    if (nickname === null) return; // cancelled
+    const data = await apiCall('/api/session/rename', { method: 'POST', body: JSON.stringify({ phone: cleanPhone, nickname: nickname.trim() }) });
+    if (data.status === 'success') { 
+        toast(nickname.trim() ? `Renamed to "${nickname.trim()}"` : 'Nickname removed'); 
+        await forceInitialSync();
+    } else toast(data.message, 'err');
 }
 
 // ──────────────────────────────────────────────
@@ -311,6 +345,8 @@ async function verifyOTP() {
         toast('Verified!'); 
         closeModal(); 
         await forceInitialSync();
+    } else if (data.status === '2fa_required') {
+        toast('2FA password required — coming soon', 'warn');
     } else toast(data.message, 'err');
 }
 
@@ -360,4 +396,9 @@ async function saveGlobalSettings() {
     };
     const data = await apiCall('/save-global', { method: 'POST', body: JSON.stringify(payload) });
     if (data.status === 'success') { toast('Saved'); closeModal(); } else toast(data.message, 'err');
+}
+
+function adminLogout() {
+    localStorage.removeItem('token');
+    window.location.href = '/logout';
 }

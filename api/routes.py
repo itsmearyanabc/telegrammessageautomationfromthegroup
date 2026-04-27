@@ -33,7 +33,7 @@ def _run_bot_loop():
 threading.Thread(target=_run_bot_loop, daemon=True).start()
 
 def run_async(coro):
-    return asyncio.run_coroutine_threadsafe(coro, _BOT_LOOP).result()
+    return asyncio.run_coroutine_threadsafe(coro, _BOT_LOOP).result(timeout=30)
 
 def _init_app():
     """System warmup: Initialize bot sessions in background."""
@@ -73,24 +73,35 @@ def _get_accounts_state():
     config = config_service.load()
     active_workers = bot_manager.get_all_status()
     phones_list = [p.strip() for p in config.get("phones", "").split("\n") if p.strip()]
+    account_settings = config.get("account_settings", {})
     
     processed = []
     final_list = []
     for w in active_workers:
         w["authenticated"] = True
+        # Inject nickname from config
+        p_clean = w.get("clean_phone", "")
+        w["nickname"] = account_settings.get(p_clean, {}).get("nickname", "")
         final_list.append(w)
-        processed.append(w["clean_phone"])
+        processed.append(p_clean)
         
     for p in phones_list:
         p_clean = "".join(filter(str.isdigit, p))
         if p_clean not in processed:
             # If session file exists, the account is authenticated but worker is lazy-loading
             has_session = os.path.exists(f"sessions/session_{p_clean}.session")
+            acct_settings = account_settings.get(p_clean, {})
             final_list.append({
                 "phone": p, "clean_phone": p_clean, "authenticated": has_session,
                 "state": "idle" if has_session else "unauth",
                 "sent": 0, "errors": 0, "total": 0, "progress": 0, 
-                "last_action": "Ready" if has_session else "Login Required"
+                "last_action": "Ready" if has_session else "Login Required",
+                "is_running": False, "source_channel": acct_settings.get("source_channel", ""),
+                "loop_interval": acct_settings.get("loop_interval", config.get("loop_interval", 15)),
+                "msg_delay": acct_settings.get("msg_delay", config.get("msg_delay", 5)),
+                "targets_count": len(acct_settings.get("targets", [])),
+                "cooldown_remaining": 0, "is_loop_active": False,
+                "nickname": acct_settings.get("nickname", "")
             })
     return final_list
 
@@ -116,6 +127,11 @@ def register_routes(app, socketio):
     @app.route("/login", methods=["GET"])
     def login_page():
         return render_template("login.html")
+
+    @app.route("/logout")
+    def logout():
+        session.clear()
+        return redirect(url_for("login_page"))
 
     @app.route("/api/login", methods=["POST"])
     def api_login():
@@ -155,8 +171,10 @@ def register_routes(app, socketio):
         phone = (request.get_json() or {}).get("phone")
         worker = _get_active_worker(phone)
         if not worker: return jsonify({"status": "error", "message": "Worker not initialized. Refresh page."}), 404
-        success = run_async(worker.trigger_dispatch(worker.current_from_chat, worker.current_msg_id))
-        return jsonify({"status": "success" if success else "error"})
+        from_chat = getattr(worker, 'current_from_chat', None)
+        msg_id = getattr(worker, 'current_msg_id', None)
+        success = run_async(worker.trigger_dispatch(from_chat, msg_id))
+        return jsonify({"status": "success" if success else "error", "message": "Dispatch triggered" if success else "No source message available"})
 
     @app.route("/api/session/settings", methods=["POST"])
     @token_required
@@ -164,17 +182,46 @@ def register_routes(app, socketio):
         data = request.get_json() or {}
         phone = data.get("phone"); p_clean = "".join(filter(str.isdigit, str(phone)))
         config = config_service.load(); settings = config.setdefault("account_settings", {}).setdefault(p_clean, {})
-        settings.update({"source_channel": data.get("source_channel"), "loop_interval": int(data.get("loop_interval", 15)), "targets": data.get("targets", []), "msg_delay": int(data.get("msg_delay", 5))})
+        settings.update({
+            "source_channel": data.get("source_channel"), 
+            "loop_interval": int(data.get("loop_interval", 15)), 
+            "targets": data.get("targets", []), 
+            "msg_delay": int(data.get("msg_delay", 5)),
+            "nickname": data.get("nickname", settings.get("nickname", ""))
+        })
         config_service.save(config)
         worker = _get_active_worker(phone)
         if worker: run_async(worker.update_settings(data.get("source_channel"), int(data.get("loop_interval", 15)), data.get("targets", []), int(data.get("msg_delay", 5))))
         return jsonify({"status": "success"})
 
+    @app.route("/api/session/rename", methods=["POST"])
+    @token_required
+    def session_rename():
+        """Set or update the nickname for an account."""
+        data = request.get_json() or {}
+        phone = data.get("phone", ""); p_clean = "".join(filter(str.isdigit, str(phone)))
+        nickname = data.get("nickname", "").strip()
+        config = config_service.load()
+        settings = config.setdefault("account_settings", {}).setdefault(p_clean, {})
+        settings["nickname"] = nickname
+        config_service.save(config)
+        return jsonify({"status": "success", "nickname": nickname})
+
     @app.route("/save-global", methods=["POST"])
     @token_required
     def save_global():
         config = config_service.load()
-        config.update({"api_id": request.form.get("api_id", "").strip(), "api_hash": request.form.get("api_hash", "").strip(), "source_channel": request.form.get("source_channel", "").strip(), "loop_interval": int(request.form.get("loop_interval", 15)), "msg_delay": int(request.form.get("msg_delay", 5))})
+        # Support both JSON and form-encoded data
+        data = request.get_json(silent=True)
+        if not data:
+            data = request.form.to_dict()
+        config.update({
+            "api_id": data.get("api_id", "").strip(), 
+            "api_hash": data.get("api_hash", "").strip(), 
+            "source_channel": data.get("source_channel", "").strip(), 
+            "loop_interval": int(data.get("loop_interval", 15)), 
+            "msg_delay": int(data.get("msg_delay", 5))
+        })
         config_service.save(config)
         return jsonify({"status": "success"})
 
@@ -217,6 +264,8 @@ def register_routes(app, socketio):
         run_async(_cleanup_reauth(phone)); config = config_service.load()
         phones = [p.strip() for p in config.get("phones", "").split("\n") if p.strip()]
         config["phones"] = "\n".join([p for p in phones if "".join(filter(str.isdigit, p)) != p_clean])
+        # Also remove account_settings for this phone
+        config.get("account_settings", {}).pop(p_clean, None)
         config_service.save(config)
         return jsonify({"status": "success"})
 
@@ -268,9 +317,17 @@ def register_routes(app, socketio):
         async def _logic():
             try:
                 await client.sign_in(phone, data.get("phone_code_hash"), code)
-                await asyncio.sleep(1); await client.disconnect(); _AUTH_CLIENTS.pop(p_clean, None)
+                await asyncio.sleep(1)
+                # Properly disconnect auth client before re-init
+                try: await client.disconnect()
+                except: pass
+                _AUTH_CLIENTS.pop(p_clean, None)
+                # Small delay to let session file flush to disk
+                await asyncio.sleep(0.5)
                 await bot_manager.initialize()
                 return {"status": "success", "message": "Authenticated"}
+            except SessionPasswordNeeded:
+                return {"status": "2fa_required", "message": "2FA password required"}
             except Exception as e: return {"status": "error", "message": str(e)}
         try: return jsonify(run_async(_logic()))
         except Exception as e: return jsonify({"status": "error", "message": str(e)})

@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from logging.handlers import RotatingFileHandler
 
 def setup_logger():
@@ -12,16 +13,19 @@ def setup_logger():
 
     # Prevent duplicate handlers
     if not logger.handlers:
-        # File Handler (Rotating)
-        file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5)
-        file_formatter = logging.Formatter('%(asctime)s - [%(levelname)s] - %(message)s')
+        # File Handler (Rotating) — force UTF-8 encoding for emoji support
+        file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
+        file_formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s')
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
 
-        # Console Handler
-        console_handler = logging.StreamHandler()
-        console_formatter = logging.Formatter('%(levelname)s: %(message)s')
-        console_handler.setFormatter(console_formatter)
+        # Console Handler — force UTF-8 stream to avoid Windows cp1252 crashes
+        try:
+            utf8_stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
+        except Exception:
+            utf8_stream = sys.stdout
+        console_handler = logging.StreamHandler(stream=utf8_stream)
+        console_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
         logger.addHandler(console_handler)
 
     return logger

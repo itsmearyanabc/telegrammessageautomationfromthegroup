@@ -66,7 +66,9 @@ class BotManager:
             )
             await client.start()
             
-            worker = BotWorker(client, phone, p_clean, targets, source, interval, self.global_semaphore)
+            delay = settings.get("msg_delay") or config.get("msg_delay", 5)
+            
+            worker = BotWorker(client, phone, p_clean, targets, source, interval, self.global_semaphore, delay)
             self.workers[p_clean] = worker # Canonical Storage
             
             if settings.get("is_loop_active"):

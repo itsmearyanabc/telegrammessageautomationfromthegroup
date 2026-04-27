@@ -20,9 +20,13 @@ class BotWorker:
     High-level session worker.
     Uses dedicated services for dispatching, progress tracking, and loop management.
     """
+    # Class-level defaults — safety net
+    cooldown_until = 0
+    current_msg_id = None
+    current_from_chat = None
     def __init__(self, client: Client, phone: str, clean_phone: str, 
                  targets: List[str], source_channel: str, loop_interval: int,
-                 global_semaphore: asyncio.Semaphore):
+                 global_semaphore: asyncio.Semaphore, msg_delay: int = 5):
         self.client = client
         self.phone = phone
         self.clean_phone = clean_phone
@@ -30,18 +34,22 @@ class BotWorker:
         self.source_channel = str(source_channel).strip()
         self.loop_interval = max(1, int(loop_interval))
         self.global_semaphore = global_semaphore
+        self.msg_delay = max(0, int(msg_delay))
         
         # Services
         self.progress = ProgressTracker()
         self.scheduler = LoopManager(phone)
         self.worker_manager = LoopManager(f"{phone}_worker")
         
-        self.msg_delay = 5
         self.is_running = False
         self.queue = asyncio.Queue()
         self._dispatch_lock = asyncio.Lock()
         
         # State tracking
+        self.current_msg_id = None
+        self.current_from_chat = None
+        self.cooldown_until = 0
+        
         # Idempotency & Coordination
         self.last_processed_msg = None
         self._handler = None
@@ -93,7 +101,9 @@ class BotWorker:
     async def _setup_monitor(self):
         if not self.client.is_connected: return
         resolved = self._get_resolved_source()
-        if not resolved: return
+        if not resolved:
+            logger.warning(f"[{self.phone}] No source channel configured - cannot monitor")
+            return
 
         async def dynamic_filter(_, __, m: Message):
             if not m.chat: return False
@@ -101,10 +111,12 @@ class BotWorker:
             return str(m.chat.id) == resolved or (m.chat.username or "").lower() == target
             
         async def on_new_message(client, message: Message):
+            logger.info(f"[{self.phone}] New message detected in source! ID: #{message.id}")
             await self.trigger_dispatch(message.chat.id, message.id)
             
         self._handler = handlers.MessageHandler(on_new_message, filters.create(dynamic_filter))
         self.client.add_handler(self._handler, group=1)
+        logger.info(f"[{self.phone}] Monitoring source channel: {resolved} (waiting for new messages...)")
 
     async def _remove_monitor(self):
         if self.client.is_connected and self._handler:
@@ -113,18 +125,25 @@ class BotWorker:
                 self._handler = None
             except: pass
 
-    async def trigger_dispatch(self, from_chat_id: int, message_id: int):
-        """Idempotent dispatch trigger with Queue Flushing."""
+    async def trigger_dispatch(self, from_chat_id=None, message_id=None):
+        """Dispatch a message to all targets. Called automatically by monitor or manually by user."""
         async with self._dispatch_lock:
-            # 1. Idempotency Guard
-            if message_id and self.last_processed_msg == message_id:
-                return True
+            # If no message specified, this is a manual re-dispatch of the last message
+            if not message_id or not from_chat_id:
+                if self.current_msg_id and self.current_from_chat:
+                    message_id = self.current_msg_id
+                    from_chat_id = self.current_from_chat
+                    logger.info(f"[{self.phone}] Manual re-dispatch of last message #{message_id}")
+                else:
+                    await self.progress.set_action("Waiting for source message... (Start the loop first)")
+                    logger.info(f"[{self.phone}] No message to dispatch yet - waiting for source channel")
+                    return False
                 
             if not self.targets:
-                await self.progress.set_action("Error: No targets")
+                await self.progress.set_action("Error: No targets configured")
                 return False
                 
-            # 2. Queue Flush: Prevent duplicates by clearing pending sends
+            # Queue Flush: clear pending sends to avoid duplicates
             while not self.queue.empty():
                 try: self.queue.get_nowait()
                 except: break
@@ -133,31 +152,20 @@ class BotWorker:
             self.current_msg_id = message_id
             self.current_from_chat = from_chat_id
             
-            # 3. Queue up new targets
-            for target in self.targets:
-                await self.queue.put(target)
-                
-            # 4. Trigger scheduler reset
-            self._new_msg_event.set()
-            if self.is_running and not self.scheduler.is_running:
-                await self._start_scheduler()
-            
-            return True
-            
             # Reset progress tracking for new batch
             await self.progress.reset(len(self.targets))
             
-            # Drain queue
-            while not self.queue.empty():
-                try: self.queue.get_nowait()
-                except asyncio.QueueEmpty: break
-                
+            # Queue up all targets
             for target in self.targets:
                 await self.queue.put(target)
             
+            logger.info(f"[{self.phone}] Dispatch queued: msg #{message_id} -> {len(self.targets)} targets")
+                
+            # Trigger scheduler reset
             self._new_msg_event.set()
             if self.is_running and not self.scheduler.is_running:
                 await self._start_scheduler()
+            
             return True
 
     async def _reforward_scheduler(self):
@@ -238,7 +246,8 @@ class BotWorker:
 
     def to_dict(self):
         stats = self.progress.get_stats()
-        cd_rem = max(0, int(self.cooldown_until - time.monotonic()))
+        cd_val = getattr(self, 'cooldown_until', 0) or 0
+        cd_rem = max(0, int(cd_val - time.monotonic()))
         return {
             "phone": self.phone, "clean_phone": self.clean_phone,
             "is_running": self.is_running,
