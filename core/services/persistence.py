@@ -98,8 +98,8 @@ class PersistenceManager:
                     f.write(resp.content)
                 logger.info(f"☁️ Restored ← {remote_path}")
                 return True
-            # 404 = file doesn't exist in cloud yet, not an error
-            if resp.status_code != 404:
+            # 400/404 = file doesn't exist in cloud yet, not an error
+            if resp.status_code not in (400, 404):
                 logger.warning(f"☁️ Download failed {remote_path}: {resp.status_code}")
             return False
         except Exception as e:
