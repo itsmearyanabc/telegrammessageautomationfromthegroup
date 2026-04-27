@@ -10,3 +10,4 @@ gunicorn==22.0.0
 gevent==24.2.1
 gevent-websocket==0.10.1
 PyJWT==2.8.0
+requests>=2.31.0

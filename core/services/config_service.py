@@ -35,6 +35,13 @@ class ConfigService:
         except Exception as e:
             if os.path.exists(temp_path): os.remove(temp_path)
             logger.error(f"Atomic save failure: {e}")
+            return
+        # Sync to Supabase (non-blocking best-effort)
+        try:
+            from core.services.persistence import persistence
+            persistence.backup_config()
+        except Exception as e:
+            logger.warning(f"☁️ Config cloud sync skipped: {e}")
 
     def update_account(self, phone, key, value):
         config = self.load()

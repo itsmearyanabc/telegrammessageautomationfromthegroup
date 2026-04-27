@@ -75,6 +75,12 @@ class BotManager:
                 await worker.start()
                 
             logger.info(f"✅ [{phone}] Session linked and active.")
+            # Backup session to cloud
+            try:
+                from core.services.persistence import persistence
+                persistence.backup_session(p_clean)
+            except Exception:
+                pass
         except AuthKeyUnregistered:
             logger.error(f"❌ [{phone}] Session revoked by Telegram.")
         except Exception as e:

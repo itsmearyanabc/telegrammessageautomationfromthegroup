@@ -36,8 +36,13 @@ def run_async(coro):
     return asyncio.run_coroutine_threadsafe(coro, _BOT_LOOP).result(timeout=30)
 
 def _init_app():
-    """System warmup: Initialize bot sessions in background."""
+    """System warmup: Restore cloud data, then initialize bot sessions."""
     time.sleep(1)
+    try:
+        from core.services.persistence import persistence
+        persistence.restore_all()
+    except Exception as e:
+        logger.warning(f"Cloud restore skipped: {e}")
     run_async(bot_manager.initialize())
 
 threading.Thread(target=_init_app, daemon=True).start()
@@ -248,6 +253,12 @@ def register_routes(app, socketio):
             if os.path.exists(f"{base}{ext}"):
                 try: os.remove(f"{base}{ext}")
                 except: pass
+        # Also remove from cloud storage
+        try:
+            from core.services.persistence import persistence
+            persistence.delete_session(p_clean)
+        except Exception:
+            pass
 
     @app.route("/api/logout-account", methods=["POST"])
     @token_required
@@ -351,8 +362,15 @@ def register_routes(app, socketio):
                 try: await client.disconnect()
                 except: pass
                 _AUTH_CLIENTS.pop(p_clean, None)
+                _AUTH_TIMESTAMPS.pop(p_clean, None)
                 # Small delay to let session file flush to disk
                 await asyncio.sleep(0.5)
+                # Backup new session to cloud immediately
+                try:
+                    from core.services.persistence import persistence
+                    persistence.backup_session(p_clean)
+                except Exception:
+                    pass
                 await bot_manager.initialize()
                 return {"status": "success", "message": "Authenticated"}
             except SessionPasswordNeeded:
