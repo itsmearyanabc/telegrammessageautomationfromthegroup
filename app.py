@@ -1,6 +1,8 @@
 import os
 import signal
 import sys
+from dotenv import load_dotenv
+load_dotenv()  # Load .env before any module reads os.environ
 from flask import Flask
 from flask_socketio import SocketIO
 from flask_cors import CORS
@@ -31,8 +33,17 @@ def graceful_shutdown(sig, frame):
     """Ensures all Telegram sessions are closed properly on exit."""
     logger.info("🛑 Shutdown signal received. Closing all sessions...")
     try:
-        run_async(bot_manager.shutdown())
-        logger.info("✅ All sessions closed. Exiting.")
+        # Schedule shutdown in the background asyncio loop without blocking.
+        # This avoids "Impossible to call blocking function in the event loop callback"
+        # when running under gevent/gunicorn.
+        import asyncio
+        from api.routes import _BOT_LOOP
+        future = asyncio.run_coroutine_threadsafe(bot_manager.shutdown(), _BOT_LOOP)
+        try:
+            future.result(timeout=5)  # Wait up to 5s, but don't hang forever
+            logger.info("✅ All sessions closed. Exiting.")
+        except Exception:
+            logger.info("⏳ Shutdown timed out, forcing exit.")
     except Exception as e:
         logger.error(f"⚠️ Error during shutdown: {e}")
     sys.exit(0)

@@ -16,6 +16,11 @@ class ConfigService:
                 data.setdefault("account_settings", {})
                 data.setdefault("loop_interval", 15)
                 data.setdefault("msg_delay", 5)
+                # Prefer env vars for sensitive credentials (keeps them out of git)
+                if os.environ.get("API_ID"):
+                    data["api_id"] = os.environ["API_ID"]
+                if os.environ.get("API_HASH"):
+                    data["api_hash"] = os.environ["API_HASH"]
                 return data
         except Exception as e:
             logger.error(f"Config load error: {e}")

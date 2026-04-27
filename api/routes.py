@@ -293,16 +293,45 @@ def register_routes(app, socketio):
     threading.Thread(target=_status_worker, daemon=True).start()
 
     _AUTH_CLIENTS = {}
+    _AUTH_TIMESTAMPS = {}  # Track when each auth client was created
+    _AUTH_TIMEOUT = 300  # 5 minutes timeout for abandoned auth flows
+
+    def _cleanup_stale_auth():
+        """Periodically disconnect auth clients that were never completed."""
+        while True:
+            try:
+                now = time.time()
+                stale = [k for k, ts in _AUTH_TIMESTAMPS.items() if now - ts > _AUTH_TIMEOUT]
+                for p_clean in stale:
+                    client = _AUTH_CLIENTS.pop(p_clean, None)
+                    _AUTH_TIMESTAMPS.pop(p_clean, None)
+                    if client:
+                        try: run_async(client.disconnect())
+                        except: pass
+                        logger.info(f"🧹 Cleaned up abandoned auth client for {p_clean}")
+            except Exception as e:
+                logger.error(f"Auth cleanup error: {e}")
+            time.sleep(60)
+
+    threading.Thread(target=_cleanup_stale_auth, daemon=True).start()
+
     @app.route("/api/auth/send_code", methods=["POST"])
     @token_required
     def send_otp():
         data = request.get_json() or {}
         phone = data.get("phone"); api_id = data.get("api_id", "").strip(); api_hash = data.get("api_hash", "").strip()
         p_clean = "".join(filter(str.isdigit, str(phone)))
+        # Disconnect any previous abandoned auth client for this phone
+        old_client = _AUTH_CLIENTS.pop(p_clean, None)
+        _AUTH_TIMESTAMPS.pop(p_clean, None)
+        if old_client:
+            try: run_async(old_client.disconnect())
+            except: pass
         async def _logic():
             await _cleanup_reauth(phone)
             client = Client(f"sessions/session_{p_clean}", api_id=int(api_id), api_hash=api_hash, workdir=".", device_model="iPhone 15 Pro Max")
             await client.connect(); sent = await client.send_code(phone); _AUTH_CLIENTS[p_clean] = client
+            _AUTH_TIMESTAMPS[p_clean] = time.time()
             return {"status": "success", "phone_code_hash": sent.phone_code_hash}
         try: return jsonify(run_async(_logic()))
         except Exception as e: return jsonify({"status": "error", "message": str(e)})

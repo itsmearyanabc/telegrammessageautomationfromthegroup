@@ -1,7 +1,7 @@
 {
-    "api_id": "33102498",
-    "api_hash": "e13c7b4d23a8eab7ee03ac2917ca59a2",
-    "phones": "+91 7701897557\n+919871026176",
+    "api_id": "",
+    "api_hash": "",
+    "phones": "",
     "source_channel": "-1003994773870",
     "loop_interval": 15,
     "targets": [
@@ -10,27 +10,6 @@
         "@youtube_watch_time0",
         "@free_promotion_group11"
     ],
-    "account_settings": {
-        "917701897557": {
-            "source_channel": "-1003282397638",
-            "loop_interval": 1,
-            "targets": [
-                "@itsmearyan_abc",
-                "@monish030905"
-            ],
-            "msg_delay": 10,
-            "nickname": "aryan main"
-        },
-        "919871026176": {
-            "nickname": "aryan1",
-            "source_channel": "-1003282397638",
-            "loop_interval": 1,
-            "targets": [
-                "@Armedia_007",
-                "@mostlyunstable"
-            ],
-            "msg_delay": 10
-        }
-    },
+    "account_settings": {},
     "msg_delay": 5
 }

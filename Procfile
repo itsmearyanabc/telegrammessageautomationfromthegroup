@@ -1,1 +1,1 @@
-web: gunicorn app:app --workers 1 --threads 4
+web: gunicorn --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker --workers 1 --bind 0.0.0.0:$PORT --timeout 120 --log-level info app:app
