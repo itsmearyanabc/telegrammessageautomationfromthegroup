@@ -199,16 +199,17 @@ function updateCardContent(card, acc) {
     const renameBtn = card.querySelector('.btn-rename');
 
     if (!acc.authenticated) {
+        dispatchBtn.style.display = 'inline-flex';
         dispatchBtn.innerHTML = '<i class="fas fa-key"></i> Login';
         dispatchBtn.onclick = () => openLoginModal(acc.phone);
         loopBtn.style.display = 'none';
         logoutBtn.style.display = 'none';
     } else {
-        dispatchBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Dispatch';
-        dispatchBtn.onclick = () => manualDispatch(acc.clean_phone);
+        dispatchBtn.style.display = 'none';
         loopBtn.style.display = 'inline-flex';
-        loopBtn.className = `btn btn-sm btn-loop ${acc.is_running ? 'btn-d' : 'btn-s'}`;
-        loopBtn.innerHTML = `<i class="fas ${acc.is_running ? 'fa-stop' : 'fa-play'}"></i>`;
+        loopBtn.style.flex = '2';
+        loopBtn.className = `btn btn-sm btn-loop ${acc.is_running ? 'btn-d' : 'btn-p'}`;
+        loopBtn.innerHTML = `<i class="fas ${acc.is_running ? 'fa-pause' : 'fa-play'}"></i> ${acc.is_running ? 'Pause' : 'Start'}`;
         loopBtn.onclick = () => toggleLoop(acc.clean_phone);
         logoutBtn.style.display = 'inline-flex';
         logoutBtn.onclick = () => logoutAccount(acc.phone);

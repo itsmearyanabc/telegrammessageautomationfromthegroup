@@ -162,8 +162,13 @@ class BotWorker:
                 await self.progress.set_action("Error: No targets configured")
                 return False
                 
-            # Queue Flush: clean reset to avoid duplicates and task_done inconsistencies
-            self.queue = asyncio.Queue()
+            # Queue Flush: clear pending sends without replacing the queue object
+            while not self.queue.empty():
+                try: 
+                    self.queue.get_nowait()
+                    self.queue.task_done()
+                except: 
+                    break
                 
             self.last_processed_msg = message_id
             self.current_msg_id = message_id
