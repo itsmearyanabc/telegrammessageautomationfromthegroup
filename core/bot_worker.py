@@ -157,10 +157,8 @@ class BotWorker:
                 await self.progress.set_action("Error: No targets configured")
                 return False
                 
-            # Queue Flush: clear pending sends to avoid duplicates
-            while not self.queue.empty():
-                try: self.queue.get_nowait()
-                except: break
+            # Queue Flush: clean reset to avoid duplicates and task_done inconsistencies
+            self.queue = asyncio.Queue()
                 
             self.last_processed_msg = message_id
             self.current_msg_id = message_id
@@ -196,8 +194,7 @@ class BotWorker:
                 except asyncio.TimeoutError:
                     if self.current_msg_id:
                         logger.info(f"[{self.phone}] Loop trigger: Re-forwarding...")
-                        await self.progress.reset(len(self.targets))
-                        for target in self.targets: await self.queue.put(target)
+                        await self.trigger_dispatch()
         except asyncio.CancelledError: pass
 
     async def _process_queue(self):

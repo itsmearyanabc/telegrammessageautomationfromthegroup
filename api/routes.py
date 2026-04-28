@@ -352,9 +352,16 @@ def register_routes(app, socketio):
         async def _logic():
             await _cleanup_reauth(phone)
             client = Client(f"sessions/session_{p_clean}", api_id=int(api_id), api_hash=api_hash, workdir=".", device_model="iPhone 15 Pro Max")
-            await client.connect(); sent = await client.send_code(phone); _AUTH_CLIENTS[p_clean] = client
-            _AUTH_TIMESTAMPS[p_clean] = time.time()
-            return {"status": "success", "phone_code_hash": sent.phone_code_hash}
+            await client.connect()
+            try:
+                sent = await client.send_code(phone)
+                _AUTH_CLIENTS[p_clean] = client
+                _AUTH_TIMESTAMPS[p_clean] = time.time()
+                return {"status": "success", "phone_code_hash": sent.phone_code_hash}
+            except Exception as e:
+                try: await client.disconnect()
+                except: pass
+                raise e
         try: return jsonify(run_async(_logic()))
         except Exception as e: return jsonify({"status": "error", "message": str(e)})
 
