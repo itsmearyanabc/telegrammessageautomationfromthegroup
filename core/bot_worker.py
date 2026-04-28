@@ -108,8 +108,13 @@ class BotWorker:
 
         async def dynamic_filter(_, __, m: Message):
             if not m.chat: return False
-            target = resolved.lower().replace("@", "")
-            return str(m.chat.id) == resolved or (m.chat.username or "").lower() == target
+            target = resolved.lower().replace("@", "").strip()
+            if "t.me/" in target:
+                target = target.split("t.me/")[-1].split("/")[0]
+            if "joinchat/" in target:
+                target = target.split("joinchat/")[-1].split("/")[0]
+            
+            return str(m.chat.id) == resolved.strip() or (m.chat.username or "").lower() == target
             
         async def on_new_message(client, message: Message):
             logger.info(f"[{self.phone}] New message detected in source! ID: #{message.id}")
