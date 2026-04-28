@@ -269,8 +269,13 @@ class BotWorker:
             except (PeerFlood, UserPrivacyRestricted, ChatWriteForbidden, UserBannedInChannel) as e:
                 return False, type(e).__name__
             except Exception as e:
+                err_str = str(e)
+                if "MESSAGE_ID_INVALID" in err_str or "MessageIdInvalid" in err_str:
+                    return False, "MessageIdInvalid"
+                if "FORBIDDEN" in err_str or "RESTRICTED" in err_str or "BANNED" in err_str:
+                    return False, "Permission Denied"
                 if attempt < 3: await asyncio.sleep(2 ** attempt)
-                else: return False, str(e)
+                else: return False, err_str
         return False, "Max Retries"
 
     def to_dict(self):

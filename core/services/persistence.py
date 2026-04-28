@@ -15,24 +15,29 @@ import json
 import requests as http_requests   # alias to avoid shadowing
 from utils.logger import logger
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 BUCKET = "telegram-sessions"
-
 
 class PersistenceManager:
     def __init__(self):
-        self.enabled = bool(SUPABASE_URL and SUPABASE_KEY)
+        # Fresh read from environ to handle late-loading and strip whitespace
+        self.url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+        self.key = os.environ.get("SUPABASE_KEY", "").strip()
+        
+        self.enabled = bool(self.url and self.key)
+        
         if not self.enabled:
-            logger.warning("☁️ Supabase not configured – data will NOT persist across restarts.")
+            missing = []
+            if not self.url: missing.append("SUPABASE_URL")
+            if not self.key: missing.append("SUPABASE_KEY")
+            logger.warning(f"☁️ Supabase not configured (Missing: {', '.join(missing)}) – data will NOT persist across restarts.")
         else:
             logger.info("☁️ Supabase persistence enabled.")
 
         self._headers = {
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {self.key}",
+            "apikey": self.key,
         }
-        self._base = f"{SUPABASE_URL}/storage/v1/object"
+        self._base = f"{self.url}/storage/v1/object"
         self._ensure_bucket()
 
     # ─────────────────────────────────────
@@ -44,7 +49,7 @@ class PersistenceManager:
             return
         try:
             resp = http_requests.post(
-                f"{SUPABASE_URL}/storage/v1/bucket",
+                f"{self.url}/storage/v1/bucket",
                 headers={**self._headers, "Content-Type": "application/json"},
                 json={"id": BUCKET, "name": BUCKET, "public": False},
                 timeout=10,
@@ -148,6 +153,10 @@ class PersistenceManager:
     def backup_config(self):
         """Push config.json to Supabase."""
         if os.path.exists("config.json"):
+            # Safety Check: Don't backup if the file is suspiciously small (default is ~150-200 bytes)
+            if os.path.getsize("config.json") < 100:
+                logger.warning("☁️ Config file suspiciously small, skipping cloud backup to prevent data loss.")
+                return False
             return self._upload("config/config.json", "config.json", "application/json")
         return False
 

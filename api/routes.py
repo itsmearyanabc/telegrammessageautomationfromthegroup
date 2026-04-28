@@ -47,7 +47,14 @@ def _init_app():
         persistence.restore_all()
     except Exception as e:
         logger.warning(f"Cloud restore skipped: {e}")
-    run_async(bot_manager.initialize())
+        
+    try:
+        future = asyncio.run_coroutine_threadsafe(bot_manager.initialize(), _BOT_LOOP)
+        # Wait without a short timeout since many bots can take minutes to init
+        future.result() 
+    except Exception as e:
+        logger.error(f"Error during bot manager initialization: {e}")
+        
     _init_complete = True
     logger.info("🚀 System initialization complete. Bot is ready.")
 
@@ -351,7 +358,7 @@ def register_routes(app, socketio):
             except: pass
         async def _logic():
             await _cleanup_reauth(phone)
-            client = Client(f"sessions/session_{p_clean}", api_id=int(api_id), api_hash=api_hash, workdir=".", device_model="iPhone 15 Pro Max")
+            client = Client(f"sessions/session_{p_clean}", api_id=int(api_id), api_hash=api_hash, workdir=".", device_model="iPhone 15 Pro Max", max_concurrent_transmissions=1)
             await client.connect()
             try:
                 sent = await client.send_code(phone)

@@ -3,6 +3,17 @@ import signal
 import sys
 from dotenv import load_dotenv
 load_dotenv()  # Load .env before any module reads os.environ
+
+# Production Diagnostic: Check if Render environment variables are actually present
+_s_url = os.environ.get("SUPABASE_URL")
+_s_key = os.environ.get("SUPABASE_KEY")
+if _s_url and _s_key:
+    print(f"DEBUG: Supabase environment variables detected (URL length: {len(_s_url)})")
+else:
+    missing = []
+    if not _s_url: missing.append("SUPABASE_URL")
+    if not _s_key: missing.append("SUPABASE_KEY")
+    print(f"DEBUG: Missing critical environment variables: {', '.join(missing)}")
 from flask import Flask
 from flask_socketio import SocketIO
 from flask_cors import CORS
@@ -29,7 +40,9 @@ socketio = SocketIO(
 # Register modular routes
 register_routes(app, socketio)
 
-def graceful_shutdown(sig, frame):
+import atexit
+
+def graceful_shutdown():
     """Ensures all Telegram sessions are closed and state is backed up on exit."""
     logger.info("🛑 Shutdown signal received. Saving state & closing sessions...")
     
@@ -43,11 +56,8 @@ def graceful_shutdown(sig, frame):
         except Exception as e:
             logger.warning(f"☁️ Pre-shutdown backup failed: {e}")
 
-    # Run backup in a thread to avoid "blocking call in event loop" errors
-    import threading
-    t = threading.Thread(target=_do_backup)
-    t.start()
-    t.join(timeout=10) # Wait up to 10s for backup to finish
+    # Run backup directly (gevent handles blocking calls via greenlets)
+    _do_backup()
     
     # 2. Gracefully stop all workers
     try:
@@ -61,11 +71,9 @@ def graceful_shutdown(sig, frame):
             logger.info("⏳ Shutdown timed out, forcing exit.")
     except Exception as e:
         logger.error(f"⚠️ Error during shutdown: {e}")
-    sys.exit(0)
 
-# Register signals for production stability
-signal.signal(signal.SIGINT, graceful_shutdown)
-signal.signal(signal.SIGTERM, graceful_shutdown)
+# Register atexit instead of native signals to avoid gevent BlockingSwitchOutError
+atexit.register(graceful_shutdown)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))

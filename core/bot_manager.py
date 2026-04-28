@@ -67,7 +67,8 @@ class BotManager:
                 api_id=int(config["api_id"]),
                 api_hash=config["api_hash"],
                 workdir=".",
-                device_model="iPhone 15 Pro Max"
+                device_model="iPhone 15 Pro Max",
+                max_concurrent_transmissions=1
             )
             
             # Pre-flight check to prevent interactive prompt (EOFError crash)
