@@ -69,6 +69,22 @@ class BotManager:
                 workdir=".",
                 device_model="iPhone 15 Pro Max"
             )
+            
+            # Pre-flight check to prevent interactive prompt (EOFError crash)
+            is_authorized = await client.connect()
+            await client.disconnect()
+            
+            if not is_authorized:
+                logger.error(f"❌ [{phone}] Session file exists but is NOT authorized. Deleting corrupted session.")
+                if os.path.exists(f"sessions/session_{p_clean}.session"):
+                    os.remove(f"sessions/session_{p_clean}.session")
+                try:
+                    from core.services.persistence import persistence
+                    persistence.delete_session(p_clean)
+                except Exception:
+                    pass
+                raise AuthKeyUnregistered("Session not authorized.")
+                
             await client.start()
             
             delay = settings.get("msg_delay") or config.get("msg_delay", 5)
@@ -89,12 +105,8 @@ class BotManager:
                 logger.info(f"▶️ [{phone}] Auto-resumed campaign (was active before restart).")
                 
             logger.info(f"✅ [{phone}] Session linked and active.")
-            # Backup session to cloud
-            try:
-                from core.services.persistence import persistence
-                persistence.backup_session(p_clean)
-            except Exception:
-                pass
+            # Safe Backup: Session is only backed up cleanly in routes.py after sign-in.
+            # Backing up here while SQLite is locked/open causes corruption.
         except AuthKeyUnregistered:
             logger.error(f"❌ [{phone}] Session revoked by Telegram.")
         except Exception as e:
@@ -106,7 +118,7 @@ class BotManager:
         worker = self.workers.get(p_clean)
         
         if not worker:
-            logger.warning(f"⚠️ Session Lookup Failed: '{identifier}' (Cleaned: '{p_clean}'). Available: {list(self.workers.keys())}")
+            logger.debug(f"ℹ️ Worker not found for: '{identifier}' (Cleaned: '{p_clean}')")
         
         return worker
 

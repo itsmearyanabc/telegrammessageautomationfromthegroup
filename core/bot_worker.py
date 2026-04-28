@@ -250,10 +250,13 @@ class BotWorker:
         """Bug Fix 7: Meaningful error handling."""
         for attempt in range(1, 4):
             try:
-                await self.client.forward_messages(
-                    chat_id=target, 
-                    from_chat_id=self.current_from_chat, 
-                    message_ids=self.current_msg_id
+                await asyncio.wait_for(
+                    self.client.forward_messages(
+                        chat_id=target, 
+                        from_chat_id=self.current_from_chat, 
+                        message_ids=self.current_msg_id
+                    ),
+                    timeout=15
                 )
                 logger.info(f"[{self.phone}] Delivered to {target}")
                 return True, ""

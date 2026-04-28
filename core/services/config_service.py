@@ -45,7 +45,7 @@ class ConfigService:
 
     def update_account(self, phone, key, value):
         config = self.load()
-        p_clean = phone.replace("+", "").replace(" ", "").replace("-", "")
+        p_clean = "".join(filter(str.isdigit, str(phone)))
         settings = config.setdefault("account_settings", {}).setdefault(p_clean, {})
         if settings.get(key) != value:
             settings[key] = value
