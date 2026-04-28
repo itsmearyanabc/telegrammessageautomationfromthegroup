@@ -5,6 +5,7 @@ import threading
 import traceback
 import jwt
 import datetime
+import requests as http_req
 from functools import wraps
 from flask import render_template, request, jsonify, session, redirect, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -35,8 +36,11 @@ threading.Thread(target=_run_bot_loop, daemon=True).start()
 def run_async(coro):
     return asyncio.run_coroutine_threadsafe(coro, _BOT_LOOP).result(timeout=30)
 
+_init_complete = False  # Guard flag to prevent re-init storms
+
 def _init_app():
     """System warmup: Restore cloud data, then initialize bot sessions."""
+    global _init_complete
     time.sleep(1)
     try:
         from core.services.persistence import persistence
@@ -44,6 +48,8 @@ def _init_app():
     except Exception as e:
         logger.warning(f"Cloud restore skipped: {e}")
     run_async(bot_manager.initialize())
+    _init_complete = True
+    logger.info("🚀 System initialization complete. Bot is ready.")
 
 threading.Thread(target=_init_app, daemon=True).start()
 
@@ -114,8 +120,8 @@ def _get_active_worker(phone: str):
     """Lazy-loading worker lookup."""
     p_clean = "".join(filter(str.isdigit, str(phone)))
     worker = bot_manager.get_worker(phone)
-    if not worker and os.path.exists(f"sessions/session_{p_clean}.session"):
-        # Auto-trigger initialization for authorized session
+    if not worker and _init_complete and os.path.exists(f"sessions/session_{p_clean}.session"):
+        # Auto-trigger initialization for authorized session (only after startup finishes)
         run_async(bot_manager.initialize())
         worker = bot_manager.get_worker(phone)
     return worker
@@ -160,6 +166,9 @@ def register_routes(app, socketio):
         worker = _get_active_worker(phone)
         if not worker: return jsonify({"status": "error", "message": "Session not ready"}), 404
         success, msg = run_async(worker.start())
+        if success:
+            # Persist running state so campaign auto-resumes after restart
+            config_service.update_account(phone, "is_loop_active", True)
         return jsonify({"status": "success" if success else "error", "message": msg})
 
     @app.route("/api/session/stop", methods=["POST"])
@@ -168,6 +177,8 @@ def register_routes(app, socketio):
         phone = (request.get_json() or {}).get("phone")
         worker = _get_active_worker(phone)
         if worker: run_async(worker.stop())
+        # Persist stopped state
+        config_service.update_account(phone, "is_loop_active", False)
         return jsonify({"status": "success"})
 
     @app.route("/api/session/dispatch", methods=["POST"])
@@ -382,3 +393,33 @@ def register_routes(app, socketio):
     @socketio.on('request_sync')
     def handle_request_sync():
         socketio.emit("status_update", {"accounts": _get_accounts_state()})
+
+    # ──────────────────────────────────────────────
+    # KEEP-ALIVE: Prevent Render free tier spin-down
+    # ──────────────────────────────────────────────
+    def _keep_alive():
+        """Self-ping every 5 minutes to keep Render from sleeping."""
+        # Wait for full startup before pinging
+        time.sleep(30)
+        ext_url = (
+            os.environ.get("RENDER_EXTERNAL_URL")
+            or os.environ.get("EXTERNAL_URL")
+        )
+        # Auto-derive from RENDER_EXTERNAL_HOSTNAME if available
+        if not ext_url:
+            hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+            if hostname:
+                ext_url = f"https://{hostname}"
+        if not ext_url:
+            logger.info("💤 Keep-alive disabled: Set RENDER_EXTERNAL_URL env var to prevent spin-down.")
+            return
+        logger.info(f"💓 Keep-alive enabled: pinging {ext_url} every 5 minutes.")
+        while True:
+            try:
+                time.sleep(300)  # 5 minutes
+                resp = http_req.get(ext_url, timeout=15)
+                logger.debug(f"💓 Keep-alive ping: {resp.status_code}")
+            except Exception:
+                pass
+
+    threading.Thread(target=_keep_alive, daemon=True).start()

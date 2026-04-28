@@ -30,17 +30,25 @@ socketio = SocketIO(
 register_routes(app, socketio)
 
 def graceful_shutdown(sig, frame):
-    """Ensures all Telegram sessions are closed properly on exit."""
-    logger.info("🛑 Shutdown signal received. Closing all sessions...")
+    """Ensures all Telegram sessions are closed and state is backed up on exit."""
+    logger.info("🛑 Shutdown signal received. Saving state & closing sessions...")
+    # 1. Backup current state to Supabase before anything else
     try:
-        # Schedule shutdown in the background asyncio loop without blocking.
-        # This avoids "Impossible to call blocking function in the event loop callback"
-        # when running under gevent/gunicorn.
+        from core.services.persistence import persistence
+        persistence.backup_config()
+        # Backup all active session files
+        for p_clean in list(bot_manager.workers.keys()):
+            persistence.backup_session(p_clean)
+        logger.info("☁️ State backed up to Supabase.")
+    except Exception as e:
+        logger.warning(f"☁️ Pre-shutdown backup failed: {e}")
+    # 2. Gracefully stop all workers
+    try:
         import asyncio
         from api.routes import _BOT_LOOP
         future = asyncio.run_coroutine_threadsafe(bot_manager.shutdown(), _BOT_LOOP)
         try:
-            future.result(timeout=5)  # Wait up to 5s, but don't hang forever
+            future.result(timeout=10)
             logger.info("✅ All sessions closed. Exiting.")
         except Exception:
             logger.info("⏳ Shutdown timed out, forcing exit.")

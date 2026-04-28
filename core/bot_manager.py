@@ -23,6 +23,11 @@ class BotManager:
             config = config_service.load()
             phones = [p.strip() for p in config.get("phones", "").split("\n") if p.strip()]
             
+            # Startup diagnostics (only on first init)
+            if not self.workers:
+                has_api = bool(config.get("api_id") and config.get("api_hash"))
+                logger.info(f"🔧 Init: {len(phones)} phone(s) registered, API creds={'✅' if has_api else '❌ MISSING'}")
+            
             # Identify active session files on disk
             session_dir = "sessions"
             if not os.path.exists(session_dir): os.makedirs(session_dir)
@@ -70,9 +75,18 @@ class BotManager:
             
             worker = BotWorker(client, phone, p_clean, targets, source, interval, self.global_semaphore, delay)
             self.workers[p_clean] = worker # Canonical Storage
+
+            # ── CRASH RECOVERY: Restore last campaign state ──
+            last_msg = settings.get("last_msg_id")
+            last_chat = settings.get("last_from_chat")
+            if last_msg and last_chat:
+                worker.current_msg_id = last_msg
+                worker.current_from_chat = last_chat
+                logger.info(f"🔄 [{phone}] Restored campaign state: msg #{last_msg} from chat {last_chat}")
             
             if settings.get("is_loop_active"):
                 await worker.start()
+                logger.info(f"▶️ [{phone}] Auto-resumed campaign (was active before restart).")
                 
             logger.info(f"✅ [{phone}] Session linked and active.")
             # Backup session to cloud

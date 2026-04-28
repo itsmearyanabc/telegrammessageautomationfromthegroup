@@ -15,6 +15,7 @@ from core.services.progress_tracker import ProgressTracker
 from core.services.loop_manager import LoopManager
 from core.services.config_service import config_service
 
+
 class BotWorker:
     """
     High-level session worker.
@@ -125,9 +126,22 @@ class BotWorker:
                 self._handler = None
             except: pass
 
+    def _persist_state(self):
+        """Save current campaign state to config for crash recovery."""
+        try:
+            config = config_service.load()
+            settings = config.setdefault("account_settings", {}).setdefault(self.clean_phone, {})
+            settings["last_msg_id"] = self.current_msg_id
+            settings["last_from_chat"] = self.current_from_chat
+            config_service.save(config)
+        except Exception as e:
+            logger.warning(f"[{self.phone}] State persist failed: {e}")
+
     async def trigger_dispatch(self, from_chat_id=None, message_id=None):
         """Dispatch a message to all targets. Called automatically by monitor or manually by user."""
         async with self._dispatch_lock:
+            is_new_message = bool(message_id and from_chat_id)
+
             # If no message specified, this is a manual re-dispatch of the last message
             if not message_id or not from_chat_id:
                 if self.current_msg_id and self.current_from_chat:
@@ -151,6 +165,10 @@ class BotWorker:
             self.last_processed_msg = message_id
             self.current_msg_id = message_id
             self.current_from_chat = from_chat_id
+
+            # Persist state on NEW messages so campaigns survive restarts
+            if is_new_message:
+                self._persist_state()
             
             # Reset progress tracking for new batch
             await self.progress.reset(len(self.targets))
