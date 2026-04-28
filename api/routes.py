@@ -397,6 +397,33 @@ def register_routes(app, socketio):
         try: return jsonify(run_async(_logic()))
         except Exception as e: return jsonify({"status": "error", "message": str(e)})
 
+    @app.route("/api/auth/check_password", methods=["POST"])
+    @token_required
+    def check_password():
+        data = request.get_json() or {}
+        phone = data.get("phone"); p_clean = "".join(filter(str.isdigit, str(phone)))
+        password = data.get("password", "")
+        client = _AUTH_CLIENTS.get(p_clean)
+        if not client: return jsonify({"status": "error", "message": "Auth session expired"}), 400
+        async def _logic():
+            try:
+                await client.check_password(password)
+                await asyncio.sleep(1)
+                try: await client.disconnect()
+                except: pass
+                _AUTH_CLIENTS.pop(p_clean, None)
+                _AUTH_TIMESTAMPS.pop(p_clean, None)
+                await asyncio.sleep(0.5)
+                try:
+                    from core.services.persistence import persistence
+                    persistence.backup_session(p_clean)
+                except Exception: pass
+                await bot_manager.initialize()
+                return {"status": "success", "message": "Authenticated"}
+            except Exception as e: return {"status": "error", "message": str(e)}
+        try: return jsonify(run_async(_logic()))
+        except Exception as e: return jsonify({"status": "error", "message": str(e)})
+
     @socketio.on('request_sync')
     def handle_request_sync():
         socketio.emit("status_update", {"accounts": _get_accounts_state()})

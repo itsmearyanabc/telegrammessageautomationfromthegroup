@@ -310,6 +310,8 @@ function openLoginModal(phone) {
     document.getElementById('otp-phone-display').textContent = `Auth: ${phone}`;
     document.getElementById('otp-step-1').classList.remove('hidden');
     document.getElementById('otp-step-2').classList.add('hidden');
+    const step3 = document.getElementById('otp-step-3');
+    if(step3) step3.classList.add('hidden');
     showModal('otp-modal');
 }
 
@@ -346,7 +348,25 @@ async function verifyOTP() {
         closeModal(); 
         await forceInitialSync();
     } else if (data.status === '2fa_required') {
-        toast('2FA password required — coming soon', 'warn');
+        document.getElementById('otp-step-2').classList.add('hidden');
+        document.getElementById('otp-step-3').classList.remove('hidden');
+        toast('2FA password required', 'warn');
+    } else toast(data.message, 'err');
+}
+
+async function verifyPassword() {
+    const btn = document.querySelector('#otp-step-3 .btn-p');
+    btn.disabled = true; btn.textContent = 'Verifying...';
+    const payload = {
+        phone: pendingAuth.phone,
+        password: document.getElementById('otp-password').value
+    };
+    const data = await apiCall('/api/auth/check_password', { method: 'POST', body: JSON.stringify(payload) });
+    btn.disabled = false; btn.textContent = 'Submit Password';
+    if (data.status === 'success') { 
+        toast('Verified!'); 
+        closeModal(); 
+        await forceInitialSync();
     } else toast(data.message, 'err');
 }
 

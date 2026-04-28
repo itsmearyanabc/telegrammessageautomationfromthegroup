@@ -126,6 +126,13 @@
         <button class="btn btn-p" style="flex:2" onclick="verifyOTP()">Verify Account</button>
       </div>
     </div>
+    <div id="otp-step-3" class="hidden">
+      <div class="fg"><label>2FA Password</label><input type="password" id="otp-password" class="input" placeholder="Enter cloud password"></div>
+      <div style="display:flex; gap:10px">
+        <button class="btn btn-s" style="flex:1" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-p" style="flex:2" onclick="verifyPassword()">Submit Password</button>
+      </div>
+    </div>
   </div>
 </div>
 
