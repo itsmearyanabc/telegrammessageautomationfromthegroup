@@ -225,6 +225,7 @@ class BotWorker:
                 if success:
                     await self.progress.mark_success(target)
                 else:
+                    logger.error(f"[{self.phone}] Delivery to {target} failed: {err}")
                     await self.progress.mark_failure(target, err)
                 
                 # Bug Fix 2: Apply delay AFTER EACH MESSAGE
