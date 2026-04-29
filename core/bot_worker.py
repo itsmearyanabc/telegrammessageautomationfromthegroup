@@ -66,7 +66,11 @@ class BotWorker:
         await self._setup_monitor()
         
         if self.current_msg_id:
-            await self._start_scheduler()
+            # IMMEDIATELY queue the pending messages on restart
+            # This avoids the Render 15-minute sleep deadlock where the bot waits 15 mins,
+            # gets shut down by Render for inactivity, and never actually sends the message.
+            logger.info(f"[{self.phone}] Immediate dispatch on resume to avoid sleep deadlock.")
+            await self.trigger_dispatch()
             
         logger.info(f"[{self.phone}] Worker started successfully.")
         return True, "Started"
